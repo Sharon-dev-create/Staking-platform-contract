@@ -103,7 +103,7 @@ contract StakingContract {
         _updateReward(msg.sender);
 
         Stake memory stakeInfo = stakes[msg.sender];
-        // enforce minimum staking period if set
+        
         if (minStakingPeriod > 0) {
             require(block.timestamp >= stakeInfo.stakedAt + minStakingPeriod, "Minimum staking period not reached");
         }

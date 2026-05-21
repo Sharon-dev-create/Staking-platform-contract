@@ -13,10 +13,12 @@ contract StakingContract {
     uint256 public constant SECONDS_IN_YEAR = 365 days;
 
     address public owner;
+    uint256 public minStakingPeriod; // in seconds
 
     struct Stake {
         uint256 amount;
         uint256 timestamp;
+        uint256 stakedAt;
         uint256 reward;
         uint256 totalStaked;
     }
@@ -33,6 +35,7 @@ contract StakingContract {
     event Staked(address indexed user, uint256 amount);
     event RewardClaimed(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 stakedAmount, uint256 rewardAmount);
+    event MinStakingPeriodUpdated(uint256 periodSeconds);
 
     constructor(address _stakingTokenAddress, address _rewardTokenAddress) {
         require(_stakingTokenAddress != address(0), "Invalid staking token address");
@@ -43,11 +46,25 @@ contract StakingContract {
         rewardToken = RewardToken(_rewardTokenAddress);
     }
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    function setMinStakingPeriod(uint256 _seconds) external onlyOwner {
+        minStakingPeriod = _seconds;
+        emit MinStakingPeriodUpdated(_seconds);
+    }
+
     function stake(uint256 amount) external {
         require(amount > 0, "Amount must be greater than 0");
 
         Stake storage user = stakes[msg.sender];
         _updateReward(msg.sender);
+        // set initial stake timestamp if first time staking
+        if (user.amount == 0) {
+            user.stakedAt = block.timestamp;
+        }
 
         user.amount += amount;
         user.timestamp = block.timestamp;
@@ -86,10 +103,15 @@ contract StakingContract {
         _updateReward(msg.sender);
 
         Stake memory stakeInfo = stakes[msg.sender];
+        // enforce minimum staking period if set
+        if (minStakingPeriod > 0) {
+            require(block.timestamp >= stakeInfo.stakedAt + minStakingPeriod, "Minimum staking period not reached");
+        }
+
         uint256 amount = stakeInfo.amount;
         uint256 reward = stakeInfo.reward;
 
-        stakes[msg.sender] = Stake(0, 0, 0, 0);
+        stakes[msg.sender] = Stake(0, 0, 0, 0, 0);
         stakingStatus[msg.sender] = StakingStatus.Unstaked;
 
         bool stakeTransferSuccess = stakingToken.transfer(msg.sender, amount);

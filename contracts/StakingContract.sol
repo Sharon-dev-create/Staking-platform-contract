@@ -9,12 +9,11 @@ contract StakingContract {
     StakingToken public stakingToken;
     RewardToken public rewardToken;
 
-    //state variables
-    uint256 public constant STAKE_REWARD_RATE = 10; // 10% reward for staking
+    uint256 public constant STAKE_REWARD_RATE = 10; // 10% annual reward
+    uint256 public constant SECONDS_IN_YEAR = 365 days;
+
     address public owner;
-    // address public staker;
-    address public tokenAddress;
-    
+
     struct Stake {
         uint256 amount;
         uint256 timestamp;
@@ -32,27 +31,27 @@ contract StakingContract {
     mapping(address => StakingStatus) public stakingStatus;
 
     event Staked(address indexed user, uint256 amount);
+    event RewardClaimed(address indexed user, uint256 amount);
+    event Unstaked(address indexed user, uint256 stakedAmount, uint256 rewardAmount);
 
-    constructor(address _tokenAddress) {
-        require(_tokenAddress != address(0), "Invalid address");
+    constructor(address _stakingTokenAddress, address _rewardTokenAddress) {
+        require(_stakingTokenAddress != address(0), "Invalid staking token address");
+        require(_rewardTokenAddress != address(0), "Invalid reward token address");
+
         owner = msg.sender;
-        tokenAddress = _tokenAddress;
-        stakingToken = StakingToken(_tokenAddress);
+        stakingToken = StakingToken(_stakingTokenAddress);
+        rewardToken = RewardToken(_rewardTokenAddress);
     }
 
     function stake(uint256 amount) external {
         require(amount > 0, "Amount must be greater than 0");
 
-        // Add a user to the staker list if they are staking for the first time
         Stake storage user = stakes[msg.sender];
-
         _updateReward(msg.sender);
 
         user.amount += amount;
         user.timestamp = block.timestamp;
         user.totalStaked += amount;
-
-        // mark user as staked
         stakingStatus[msg.sender] = StakingStatus.Staked;
 
         bool success = stakingToken.transferFrom(msg.sender, address(this), amount);
@@ -66,32 +65,58 @@ contract StakingContract {
         if (stakeInfo.amount == 0) {
             return 0;
         }
-        uint256 reward = (stakeInfo.amount * STAKE_REWARD_RATE) / 100;
-        return reward;
+
+        uint256 elapsed = block.timestamp - stakeInfo.timestamp;
+        uint256 pendingReward = (stakeInfo.amount * STAKE_REWARD_RATE * elapsed) / SECONDS_IN_YEAR / 100;
+        return stakeInfo.reward + pendingReward;
     }
 
     function _updateReward(address staker) internal {
         Stake storage stakeInfo = stakes[staker];
-        uint256 reward = calculateReward(staker);
-        stakeInfo.reward += reward;
+        if (stakeInfo.amount > 0) {
+            uint256 pendingReward = calculateReward(staker) - stakeInfo.reward;
+            stakeInfo.reward += pendingReward;
+            stakeInfo.timestamp = block.timestamp;
+        }
     }
 
     function unstake() external {
         require(stakingStatus[msg.sender] == StakingStatus.Staked, "Not staked");
-        Stake memory stakeInfo = stakes[msg.sender];
-        uint256 reward = calculateReward(msg.sender);
-        uint256 totalAmount = stakeInfo.amount + reward;
 
-       
+        _updateReward(msg.sender);
+
+        Stake memory stakeInfo = stakes[msg.sender];
+        uint256 amount = stakeInfo.amount;
+        uint256 reward = stakeInfo.reward;
+
         stakes[msg.sender] = Stake(0, 0, 0, 0);
         stakingStatus[msg.sender] = StakingStatus.Unstaked;
+
+        bool stakeTransferSuccess = stakingToken.transfer(msg.sender, amount);
+        require(stakeTransferSuccess, "Stake transfer failed");
+
+        if (reward > 0) {
+            bool rewardTransferSuccess = rewardToken.transfer(msg.sender, reward);
+            require(rewardTransferSuccess, "Reward transfer failed");
+        }
+
+        emit Unstaked(msg.sender, amount, reward);
     }
 
     function claimReward() external {
         require(stakingStatus[msg.sender] == StakingStatus.Staked, "Not staked");
-        uint256 reward = calculateReward(msg.sender);
+
+        _updateReward(msg.sender);
+
+        uint256 reward = stakes[msg.sender].reward;
         require(reward > 0, "No reward to claim");
 
+        stakes[msg.sender].reward = 0;
         stakes[msg.sender].timestamp = block.timestamp;
-    }    
+
+        bool rewardTransferSuccess = rewardToken.transfer(msg.sender, reward);
+        require(rewardTransferSuccess, "Reward transfer failed");
+
+        emit RewardClaimed(msg.sender, reward);
+    }
 }

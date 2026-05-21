@@ -11,6 +11,7 @@ contract StakingContract {
 
     uint256 public constant STAKE_REWARD_RATE = 10; // 10% annual reward
     uint256 public constant SECONDS_IN_YEAR = 365 days;
+    uint256 public constant DEFAULT_MIN_STAKING_PERIOD = 30 days; // default 30 day minimum
 
     address public owner;
     uint256 public minStakingPeriod; // in seconds
@@ -44,6 +45,7 @@ contract StakingContract {
         owner = msg.sender;
         stakingToken = StakingToken(_stakingTokenAddress);
         rewardToken = RewardToken(_rewardTokenAddress);
+        minStakingPeriod = DEFAULT_MIN_STAKING_PERIOD; // set default minimum staking period
     }
 
     modifier onlyOwner() {
@@ -129,6 +131,11 @@ contract StakingContract {
         require(stakingStatus[msg.sender] == StakingStatus.Staked, "Not staked");
 
         _updateReward(msg.sender);
+
+        // enforce minimum staking period before allowing reward claims
+        if (minStakingPeriod > 0) {
+            require(block.timestamp >= stakes[msg.sender].stakedAt + minStakingPeriod, "Minimum staking period not reached");
+        }
 
         uint256 reward = stakes[msg.sender].reward;
         require(reward > 0, "No reward to claim");
